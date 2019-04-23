@@ -24,7 +24,6 @@ class VConsoleNetworkTab extends VConsolePlugin {
 
   constructor(...args) {
     super(...args);
-
     this.$tabbox = $.render(tplTabbox, {});
     this.$header = null;
     this.reqList = {}; // URL as key, request item as value
@@ -47,7 +46,7 @@ class VConsoleNetworkTab extends VConsolePlugin {
     let toolList = [{
       name: 'Clear',
       global: false,
-      onClick: function(e) {
+      onClick: function (e) {
         that.clearLog();
       }
     }];
@@ -62,21 +61,21 @@ class VConsoleNetworkTab extends VConsolePlugin {
     this.renderHeader();
 
     // expend group item
-    $.delegate($.one('.vc-log', this.$tabbox), 'click', '.vc-group-preview', function(e) {
+    $.delegate($.one('.vc-log', this.$tabbox), 'click', '.vc-group-preview', function (e) {
       let reqID = this.dataset.reqid;
       let $group = this.parentNode;
       if ($.hasClass($group, 'vc-actived')) {
         $.removeClass($group, 'vc-actived');
-        that.updateRequest(reqID, {actived: false});
+        that.updateRequest(reqID, { actived: false });
       } else {
         $.addClass($group, 'vc-actived');
-        that.updateRequest(reqID, {actived: true});
+        that.updateRequest(reqID, { actived: true });
       }
       e.preventDefault();
     });
 
     let $content = $.one('.vc-content');
-    $.bind($content, 'scroll', function(e) {
+    $.bind($content, 'scroll', function (e) {
       if (!that.isShow) {
         return;
       }
@@ -141,8 +140,8 @@ class VConsoleNetworkTab extends VConsolePlugin {
 
   renderHeader() {
     let count = Object.keys(this.reqList).length,
-        $header = $.render(tplHeader, {count: count}),
-        $logbox = $.one('.vc-log', this.$tabbox);
+      $header = $.render(tplHeader, { count: count }),
+      $logbox = $.one('.vc-log', this.$tabbox);
     if (this.$header) {
       // update
       this.$header.parentNode.replaceChild($header, this.$header);
@@ -165,11 +164,11 @@ class VConsoleNetworkTab extends VConsolePlugin {
 
     // update item
     let item = this.reqList[id] || {};
+    console.log(item)
     for (let key in data) {
       item[key] = data[key];
     }
     this.reqList[id] = item;
-    // console.log(item);
 
     if (!this.isReady) {
       return;
@@ -181,7 +180,7 @@ class VConsoleNetworkTab extends VConsolePlugin {
       url: item.url,
       status: item.status,
       method: item.method || '-',
-      costTime: item.costTime>0 ? item.costTime+'ms' : '-',
+      costTime: item.costTime > 0 ? item.costTime + 'ms' : '-',
       header: item.header || null,
       getData: item.getData || null,
       postData: item.postData || null,
@@ -224,13 +223,13 @@ class VConsoleNetworkTab extends VConsolePlugin {
       domData.status = 'Pending';
     } else if (item.readyState == 2 || item.readyState == 3) {
       domData.status = 'Loading';
-    } else if (item.readyState == 4) {
+    } else if (item.readyState == 4 || item.statusText === 'OK') {
       // do nothing
     } else {
       domData.status = 'Unknown';
     }
     let $new = $.render(tplItem, domData),
-        $old = this.domList[id];
+      $old = this.domList[id];
     if (item.status >= 400) {
       $.addClass($.one('.vc-group-preview', $new), 'vc-table-row-error');
     }
@@ -253,27 +252,103 @@ class VConsoleNetworkTab extends VConsolePlugin {
     }
   }
 
+  fetchParams(args) {
+    let paramDefault = {}
+    try {
+      const _args = Array.prototype.slice.apply(args)
+      if (!_args.length) return paramDefault
+      const firstCaller = _args[0]
+      const secondCaller = _args[1]
+      if (_args.length == 1) {
+        if (this.judgeType(firstCaller, 'String')) {
+          paramDefault['url'] = firstCaller
+          paramDefault['method'] = 'get'
+        }
+        if (this.judgeType(firstCaller, 'Request')) {
+          paramDefault['url'] = firstCaller.url
+          paramDefault['fetchData'] = firstCaller.body
+          paramDefault['method'] = firstCaller.method || 'GET'
+          paramDefault['withCredentials'] = firstCaller.credentials || 'same-origin'
+          paramDefault.mode = firstCaller.mode || 'cors'
+        }
+      }
+      if (_args.length == 2) {
+        if (this.judgeType(firstCaller, 'String')) {
+          paramDefault['url'] = firstCaller
+        }
+        if (this.judgeType(secondCaller, 'Object')) {
+          paramDefault['fetchData'] = secondCaller.body
+          paramDefault['method'] = secondCaller.method || 'GET'
+          paramDefault['withCredentials'] = secondCaller.credentials || 'same-origin'
+        }
+      }
+      return paramDefault
+    } catch (err) {
+      return paramDefault
+    }
+  }
+
+  judgeType(o, type) {
+    const TYPE_NAME = Object.prototype.toString.call(o)
+    if (type) {
+      return TYPE_NAME === "[object " + (type || "Object") + "]"
+    } else {
+      return TYPE_NAME.replace('[object ', '').replace(']', '')
+    }
+  }
+
   /**
    * mock ajax request
    * @private
    */
   mockAjax() {
+    let that = this;
+    const FETCH = window.fetch
+    if (FETCH) {
+      window.fetch = function (...arg) {
+        try {
+          let params = that.fetchParams(arg)
+          let headers = {}
+          const START_TIME = new Date().getTime()
+          params._requestID = that.getUniqueID();
+          return FETCH.apply(this, arg).then(data => {
+            const END_TIME = new Date().getTime()
+            params.costTime = END_TIME - START_TIME
+            params.statusText = data.statusText
+            data.headers.forEach((item, index) => {
+              headers[index] = item
+            })
+            params.status = data.status
+            params.header = headers
+            return data.json()
+          }).then(response => {
+            // JSON
+            params.responseType = 'json'
+            params.response = response
+            console.log(params)
+            that.updateRequest(params._requestID, params)
+          })
+        } catch (err) {
+          console.log(err, '[fetch err!]')
+          return FETCH
+        }
+      }
+    }
     let _XMLHttpRequest = window.XMLHttpRequest;
     if (!_XMLHttpRequest) { return; }
 
-    let that = this;
     let _open = window.XMLHttpRequest.prototype.open,
-        _send = window.XMLHttpRequest.prototype.send;
+      _send = window.XMLHttpRequest.prototype.send;
     that._open = _open;
     that._send = _send;
 
     // mock open()
-    window.XMLHttpRequest.prototype.open = function() {
+    window.XMLHttpRequest.prototype.open = function () {
       let XMLReq = this;
       let args = [].slice.call(arguments),
-          method = args[0],
-          url = args[1],
-          id = that.getUniqueID();
+        method = args[0],
+        url = args[1],
+        id = that.getUniqueID();
       let timer = null;
 
       // may be used by other functions
@@ -282,8 +357,8 @@ class VConsoleNetworkTab extends VConsolePlugin {
       XMLReq._url = url;
 
       // mock onreadystatechange
-      let _onreadystatechange = XMLReq.onreadystatechange || function() {};
-      let onreadystatechange = function() {
+      let _onreadystatechange = XMLReq.onreadystatechange || function () { };
+      let onreadystatechange = function () {
 
         let item = that.reqList[id] || {};
 
@@ -309,14 +384,14 @@ class VConsoleNetworkTab extends VConsolePlugin {
           // HEADERS_RECEIVED
           item.header = {};
           let header = XMLReq.getAllResponseHeaders() || '',
-              headerArr = header.split("\n");
+            headerArr = header.split("\n");
           // extract plain text to key-value format
-          for (let i=0; i<headerArr.length; i++) {
+          for (let i = 0; i < headerArr.length; i++) {
             let line = headerArr[i];
             if (!line) { continue; }
             let arr = line.split(': ');
             let key = arr[0],
-                value = arr.slice(1).join(': ');
+              value = arr.slice(1).join(': ');
             item.header[key] = value;
           }
         } else if (XMLReq.readyState == 3) {
@@ -325,7 +400,7 @@ class VConsoleNetworkTab extends VConsolePlugin {
           // DONE
           clearInterval(timer);
           item.endTime = +new Date(),
-          item.costTime = item.endTime - (item.startTime || item.endTime);
+            item.costTime = item.endTime - (item.startTime || item.endTime);
           item.response = XMLReq.response;
         } else {
           clearInterval(timer);
@@ -341,7 +416,7 @@ class VConsoleNetworkTab extends VConsolePlugin {
       // some 3rd libraries will change XHR's default function
       // so we use a timer to avoid lost tracking of readyState
       let preState = -1;
-      timer = setInterval(function() {
+      timer = setInterval(function () {
         if (preState != XMLReq.readyState) {
           preState = XMLReq.readyState;
           onreadystatechange.call(XMLReq);
@@ -352,10 +427,10 @@ class VConsoleNetworkTab extends VConsolePlugin {
     };
 
     // mock send()
-    window.XMLHttpRequest.prototype.send = function() {
+    window.XMLHttpRequest.prototype.send = function () {
       let XMLReq = this;
       let args = [].slice.call(arguments),
-          data = args[0];
+        data = args[0];
 
       let item = that.reqList[XMLReq._requestID] || {};
       item.method = XMLReq._method.toUpperCase();
@@ -369,7 +444,7 @@ class VConsoleNetworkTab extends VConsolePlugin {
         query = query.split('&'); // => ['b=c', 'd=?e']
         for (let q of query) {
           q = q.split('=');
-          item.getData[ q[0] ] = q[1];
+          item.getData[q[0]] = q[1];
         }
       }
 
@@ -381,7 +456,7 @@ class VConsoleNetworkTab extends VConsolePlugin {
           item.postData = {};
           for (let q of arr) {
             q = q.split('=');
-            item.postData[ q[0] ] = q[1];
+            item.postData[q[0]] = q[1];
           }
         } else if (tool.isPlainObject(data)) {
           item.postData = data;
@@ -404,9 +479,9 @@ class VConsoleNetworkTab extends VConsolePlugin {
    * @return string
    */
   getUniqueID() {
-    let id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        let r = Math.random()*16|0, v = c == 'x' ? r : (r&0x3|0x8);
-        return v.toString(16);
+    let id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      let r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
     });
     return id;
   }
